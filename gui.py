@@ -4,6 +4,7 @@ from PyQt5.QtWidgets import (
 from firewall_core import load_rules, add_rule, remove_rule
 from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLineEdit, QComboBox, QPushButton, QLabel, QMessageBox
 from firewall_core import add_rule, load_rules
+import time 
 
 class AddRuleDialog(QDialog):
     def __init__(self, parent=None):
@@ -97,6 +98,11 @@ class FirewallGUI(QMainWindow):
         self.init_invalid_packets_tab()
         self.tab_widget.addTab(self.invalid_packets_tab, "Invalid Packets")
 
+         # Tab 6: Expired UDP Connections
+        self.expired_udp_tab = QWidget()
+        self.init_expired_udp_tab()
+        self.tab_widget.addTab(self.expired_udp_tab, "Expired UDP Connections")
+
         layout.addWidget(self.tab_widget)
         main_widget = QWidget()
         main_widget.setLayout(layout)
@@ -106,8 +112,8 @@ class FirewallGUI(QMainWindow):
         layout = QVBoxLayout()
 
         # Table for rules
-        self.rules_table = QTableWidget(0, 5)  # Adjusted for new rule fields
-        self.rules_table.setHorizontalHeaderLabels(["Src IP", "Src Port", "Dst IP", "Dst Port", "Protocol"])
+        self.rules_table = QTableWidget(0, 6)  # Adjusted for new rule fields
+        self.rules_table.setHorizontalHeaderLabels(["Src IP", "Src Port", "Dst IP", "Dst Port", "Protocol", " "])
         layout.addWidget(self.rules_table)
 
         # Button to add rules
@@ -156,7 +162,6 @@ class FirewallGUI(QMainWindow):
         self.rules_table.setRowCount(0)
         rules = load_rules()
         print(rules)  # Debug: Check the structure of rules
-        
         if not rules:  # Handle case where no rules exist
             print("No rules found.")
             return  # Exit the method, nothing to display
@@ -165,10 +170,15 @@ class FirewallGUI(QMainWindow):
             row = self.rules_table.rowCount()
             self.rules_table.insertRow(row)
             
-            # Safely handle missing keys by using rule.get()
+            # Add the rule details to the table
             for col, key in enumerate(["src_ip", "src_port", "dst_ip", "dst_port", "protocol"]):
                 value = rule.get(key, "*")  # Default to '*' if key is missing
                 self.rules_table.setItem(row, col, QTableWidgetItem(str(value)))
+
+            # Add the "Remove" button
+            remove_button = QPushButton("Remove")
+            remove_button.clicked.connect(lambda checked, rule=rule: self.remove_rule(rule))
+            self.rules_table.setCellWidget(row, 5, remove_button)  # Place the button in the 6th column
 
 
     def add_packet_to_table(self, table, packet_info):
@@ -234,4 +244,63 @@ class FirewallGUI(QMainWindow):
         for col, key in enumerate(["src_ip", "dst_ip", "src_port", "dst_port", "protocol"]):
             self.invalid_packets_table.setItem(row, col, QTableWidgetItem(str(packet_info[key])))
         
+    def init_expired_udp_tab(self):
+        layout = QVBoxLayout()
+
+        # Table for expired UDP connections
+        self.expired_udp_table = QTableWidget(0, 5)
+        self.expired_udp_table.setHorizontalHeaderLabels(["Src IP", "Dst IP", "Src Port", "Dst Port", "Protocol"])
+        layout.addWidget(self.expired_udp_table)
+
+        self.expired_udp_tab.setLayout(layout)
+
+    def update_connection_table(self, packet_info, state):
+        key = (packet_info["src_ip"], packet_info["src_port"], packet_info["dst_ip"], packet_info["dst_port"])
         
+        if state == "new":
+            # Add the connection with the current timestamp
+            self.connection_table[key] = {"state": "new", "start_time": time()}
+        elif state == "established":
+            self.connection_table[key]["state"] = "established"  # Update the state to established
+        elif state == "closed":
+            self.connection_table.pop(key, None)  # Remove closed connections
+        elif state == "no connection":
+            self.connection_table[key] = {"state": "no connection", "start_time": time()}  # Add no connection with timestamp
+
+    def cleanup_udp_connections(self):
+        current_time = time()
+        keys_to_remove = []
+
+        for key, value in self.connection_table.items():
+            # Check if this is a UDP connection and if it has been in the table for more than 30 seconds
+            if value["state"] == "no connection":
+                if current_time - value["start_time"] > 30:  # 30 seconds timeout
+                    keys_to_remove.append(key)
+
+        # Remove expired UDP connections and add them to the expired list for the GUI
+        for key in keys_to_remove:
+            expired_connection = self.connection_table.pop(key)
+            self.expired_udp_connections.append(expired_connection)  # Add to expired list
+            self.add_expired_udp_to_table(expired_connection)
+
+    def add_expired_udp_to_table(self, connection_info):
+        """Add expired UDP connection info to the expired UDP table."""
+        row = self.expired_udp_table.rowCount()
+        self.expired_udp_table.insertRow(row)
+        self.expired_udp_table.setItem(row, 0, QTableWidgetItem(connection_info["src_ip"]))
+        self.expired_udp_table.setItem(row, 1, QTableWidgetItem(connection_info["dst_ip"]))
+        self.expired_udp_table.setItem(row, 2, QTableWidgetItem(str(connection_info["src_port"])))
+        self.expired_udp_table.setItem(row, 3, QTableWidgetItem(str(connection_info["dst_port"])))
+        self.expired_udp_table.setItem(row, 4, QTableWidgetItem(connection_info["state"]))
+
+
+    def remove_rule(self, rule):
+        # Remove the rule from the backend (e.g., the rules file)
+        result = remove_rule(rule["src_ip"], rule["src_port"], rule["dst_ip"], rule["dst_port"], rule["protocol"])
+        
+        if result:
+            # If rule was successfully removed, refresh the rules table
+            QMessageBox.information(self, "Rule Removed", "The rule has been successfully removed.")
+            self.refresh_rules()
+        else:
+            QMessageBox.warning(self, "Error", "Failed to remove the rule.")

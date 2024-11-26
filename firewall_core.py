@@ -153,11 +153,13 @@ def determine_state(packet):
             return "established"
         elif flags == "FA" or flags == "R":  # FIN-ACK or RST (connection termination)
             return "closed"
+
         
     elif UDP in packet:
         return "no connection"  # UDP does not have connection states
+    else:
+        return "not UDP or TCP"
     return None
-
 
 def is_valid_packet(packet_info):
     """
@@ -172,3 +174,29 @@ def is_valid_packet(packet_info):
 def is_packet_state(packet_info):
     key = (packet_info["src_ip"], packet_info["src_port"], packet_info["dst_ip"], packet_info["dst_port"])
     return connection_table[key]
+
+
+def remove_rule(src_ip, src_port, dst_ip, dst_port, protocol):
+    # Load existing rules
+    try:
+        with open("rules.json", "r") as file:
+            rules = json.load(file)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return False  # File not found or invalid format
+    
+    # Filter out the rule to be removed
+    new_rules = [rule for rule in rules if not (rule["src_ip"] == src_ip and 
+                                                 rule["src_port"] == src_port and 
+                                                 rule["dst_ip"] == dst_ip and 
+                                                 rule["dst_port"] == dst_port and 
+                                                 rule["protocol"] == protocol)]
+
+    # If no rule was removed, return False
+    if len(new_rules) == len(rules):
+        return False
+    
+    # Save the updated rules back to the file
+    with open("rules.json", "w") as file:
+        json.dump(new_rules, file, indent=4)
+    
+    return True
