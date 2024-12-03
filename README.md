@@ -14,3 +14,4 @@ This is a Python-based stateful firewall application that allows users to define
 - Dependencies:
   - PyQt5
   - Scapy
+  - WinPcap
